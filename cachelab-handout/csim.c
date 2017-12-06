@@ -242,7 +242,7 @@ int main(int argc, char** argv)
         }
     }
     clearCache(simulator, stats);
-    //printSummary( stats.hits, stats.misses, stats.evictions);
+    printSummary( stats.hits, stats.misses, stats.evictions);
     fclose(fp);
     return 0;
 }
