@@ -1,8 +1,10 @@
 #include "cachelab.h"
 #include "stdio.h"
-#include <unistd.h>
-#include <math.h>
-#include <stdlib.h>
+#include "unistd.h"
+#include "math.h"
+#include "stdlib.h"
+#include <getopt.h>
+#define _POSIX_C_SOURCE 2
 //jteela
 
 typedef unsigned long int mem_address;
@@ -57,7 +59,6 @@ cache buildCache(cache_info stuff) {
             tempSet.lines[j] = tempLine;
         }
     }
-    printf("cache built\n");
     return tempCache;
 }
 
@@ -82,96 +83,99 @@ void clearCache(cache thisOne, cache_info stats) {
     }
 
     if(thisOne.sets != NULL) free(thisOne.sets);
-    printf("cache cleared\n");
 }
 
-int getLeastUsed(cache_set thisSet, cache_info params) {
-    int *tempPoint = (int*) malloc(sizeof(int)* 2);
-    int i; 
+int getLeastUsed(cache_set thisSet, cache_info params, int* usedLines) {
+    int num_lines = params.Eval;
 
-    int numLines = params.Eval;
-    int mostUsed = 0;
-    int whiteCrayon = 0;
+    int mostUsed = thisSet.lines[0].access_counter; 
+    int whiteCrayon = thisSet.lines[0].access_counter;
+    
+
     int whiteCrayonIndex = 0;
-    int mostUsedindex = 0;
+    
+    int lineIndex;
+    set_line line; 
 
-    for(i = 0; i < numLines; i++) {
-        printf("line: %d | access count: %d | most used: %d | least used: %d\n", i, thisSet.lines[i].access_counter, mostUsed, whiteCrayon);
-        if(thisSet.lines[i].access_counter > mostUsed) { 
-            mostUsedindex = i;
-            mostUsed = thisSet.lines[i].access_counter;
+    for (lineIndex = 1; lineIndex < num_lines; lineIndex ++) {
+    
+        line = thisSet.lines[lineIndex];
+
+        if (whiteCrayon > line.access_counter) {
+            whiteCrayonIndex = lineIndex; 
+            whiteCrayon = line.access_counter;
         }
-        else if (thisSet.lines[i].access_counter < whiteCrayon) {
-            whiteCrayonIndex = i;
-            printf("white crayon = %d\n", i);
-            whiteCrayon = thisSet.lines[i].access_counter; 
+
+        if (mostUsed < line.access_counter) {
+            mostUsed = line.access_counter;
         }
     }
-
+    usedLines[0] = whiteCrayon;
+    usedLines[1] = mostUsed;
+    
     return whiteCrayonIndex;
 }
-
-cache_info readInstruction (mem_address address, cache thisCache, cache_info params) {
-
-    int currentLine;
-    int isFull = 1; 
-
-    int numLines = params.Eval;
-    int hits = params.hits;
-    int tagSize = (64 - (params.b + params.s));
-
-    long unsigned setIndexStub = address << (tagSize);
-    long unsigned setIndex = setIndexStub >> (tagSize + params.b);
+cache_info simulateCache (cache this_cache, cache_info par, mem_address address) {
+            int lineIndex;
+            int cache_full = 1;
     
-    mem_address inputTag = address >> (params.Sval + params.Bval);
-
-    cache_set tempSet = thisCache.sets[setIndex];
-
-    for(currentLine = 0; currentLine < numLines; currentLine++) {
-        set_line tempLine = tempSet.lines[currentLine];
-        if(tempLine.valid) {
-            if(tempLine.tag == inputTag) {
-                params.hits++;
-                tempLine.access_counter++;
-                thisCache.sets[setIndex].lines[currentLine] = tempLine;
-                printf("%d hits on line %d of set %d\n\n",tempLine.access_counter, currentLine, setIndex);
+            int num_lines = par.Eval;
+            int prev_hits = par.hits;
+    
+            int tag_size = (64 - (par.s + par.b));
+    
+            unsigned long temp = address << (tag_size);
+            unsigned long setIndex = temp >> (tag_size + par.b);
+            mem_address input_tag = address >> (par.s + par.b);
+    
+            cache_set query_set = this_cache.sets[setIndex];
+            for (lineIndex = 0; lineIndex < num_lines; lineIndex ++) {
+                set_line line = query_set.lines[lineIndex];
+                if (line.valid) {
+                    if (line.tag == input_tag) {
+                        line.access_counter++;
+                        par.hits++;
+                        query_set.lines[lineIndex] = line;
+                    }
+    
+                } else if (!(line.valid) && (cache_full)) {
+                    cache_full = 0;     
+                }
+            }   
+    
+            if (prev_hits == par.hits) {
+                par.misses++; 
+                
+            } else {
+                return par; 
             }
-        }
-        else if(!(tempLine.valid) && isFull) {
-            isFull = 0;
-        }
-    }
-    if(hits == params.hits) params.misses++;
-    else {
-        return params;
-    }
-    printf("\nmiss\n\n");
-
-    if(isFull) {
-        params.evictions++;
-        int whiteCrayon = getLeastUsed(tempSet, params);
-        thisCache.sets[setIndex].lines[whiteCrayon].valid = 1;
-        thisCache.sets[setIndex].lines[whiteCrayon].tag = inputTag;
-        thisCache.sets[setIndex].lines[whiteCrayon].access_counter = 0;
-        printf("line %d of set %d updated to %d\n", whiteCrayon, setIndex, inputTag);
-    }
-    else {
-       int open = findOpen(tempSet, params);
-       tempSet.lines[open].valid = 1;
-       tempSet.lines[open].tag = inputTag;
-       printf("line %d of set %d updated to %d\n", open, setIndex, inputTag);
-
-    }
-    return params;
-}
+    
+    
+            int *used_lines = (int*) malloc(sizeof(int) * 2);
+            int whiteCrayonIndex = getLeastUsed(query_set, par, used_lines);   
+    
+            if (cache_full) {
+                par.evictions++;
+                query_set.lines[whiteCrayonIndex].tag = input_tag;
+                query_set.lines[whiteCrayonIndex].access_counter = used_lines[1] + 1;
+            } else { 
+    
+                int empty_line_index = findOpen(query_set, par);
+                query_set.lines[empty_line_index].tag = input_tag;
+                query_set.lines[empty_line_index].valid = 1;
+                query_set.lines[empty_line_index].access_counter = used_lines[1] + 1;
+            }                       
+    
+            free(used_lines);
+            return par;
+    
+    } /* end simulate_cache */
 
 int main(int argc, char** argv)
 {
-    short i;
     int opt;
     int numSets = 1;
     int blockNum = 1; 
-    int linesPerSet;
     char* sval = 0;
     char* eval = 0;
     char* bval = 0;
@@ -216,26 +220,29 @@ int main(int argc, char** argv)
     stats.Bval = blockNum;
     stats.Sval = numSets;
     stats.Eval = atoi(eval);
+    stats.s = atoi(sval);
+    stats.b = atoi(bval);
     stats.hits = 0;
     stats.misses = 0;
     stats. evictions = 0;
     simulator = buildCache(stats);
     FILE *fp = fopen(tval, "r");
-    int cmd;
+    char cmd;
     mem_address nextAdd;
     int size;
-    char buff[255];
-    while(fscanf(fp,"%c %11x, %d", &cmd, &nextAdd, &size) == 3) {
-        if(cmd == "I") {
-            printf("Ignoring command\n\n");
+    while(fscanf(fp," %c %lx, %d", &cmd, &nextAdd, &size) == 3) {
+        if(cmd == 'I') {
+        }
+        else if (cmd == 'L' || cmd == 'S') {
+            stats = simulateCache(simulator, stats, nextAdd);
         }
         else {
-            stats =    stats = readInstruction(nextAdd, simulator, stats);
+            stats = simulateCache(simulator, stats, nextAdd);
+            stats = simulateCache(simulator, stats, nextAdd);
         }
     }
-
-    printf("\n*****  hits: %d misses: %d evictions: %d  *****\n", stats.hits, stats.misses, stats.evictions);
     clearCache(simulator, stats);
-    //printSummary(5, 6, 7);
+    //printSummary( stats.hits, stats.misses, stats.evictions);
+    fclose(fp);
     return 0;
 }

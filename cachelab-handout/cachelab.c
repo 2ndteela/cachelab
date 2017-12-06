@@ -7,6 +7,7 @@
 #include "cachelab.h"
 #include <time.h>
 
+
 trans_func_t func_list[MAX_TRANS_FUNCS];
 int func_counter = 0; 
 
