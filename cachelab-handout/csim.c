@@ -5,12 +5,12 @@
 #include <stdlib.h>
 //jteela
 
-typedef unsigned long int mem_adress;
+typedef unsigned long int mem_address;
 
 typedef struct {
     int valid;
     int tag;
-    mem_adress adress;
+    mem_address adress;
     int access_counter;
 } set_line;
 
@@ -23,9 +23,13 @@ typedef struct {
 } cache;
 
 typedef struct {
-    int Eval; 
-    int Sval;
-    int Bval;
+
+    int s;      //original s parameter
+    int b;      //original b parameter
+
+    int Eval;   //Lines per set
+    int Sval;   //Number of Sets
+    int Bval;   //Size of the block
 
     int hits;
     int misses;
@@ -57,6 +61,18 @@ cache buildCache(cache_info stuff) {
     return tempCache;
 }
 
+int findOpen(cache_set thisSet, cache_info stats) {
+    int i;
+    int numLines = stats.Eval;
+
+    for(i = 0; i < numLines; i++) {
+        if(thisSet.lines[i].valid == 0) {
+            return i;
+        }
+    }
+    return -1;
+}
+
 void clearCache(cache thisOne, cache_info stats) {
     int i;
 
@@ -69,18 +85,84 @@ void clearCache(cache thisOne, cache_info stats) {
     printf("cache cleared\n");
 }
 
-int findOpen(cache_set thisSet, cache_info stats) {
-    int i;
-    int numLines = stats.Eval;
+int getLeastUsed(cache_set thisSet, cache_info params) {
+    int *tempPoint = (int*) malloc(sizeof(int)* 2);
+    int i; 
+
+    int numLines = params.Eval;
+    int mostUsed = 0;
+    int whiteCrayon = 0;
+    int whiteCrayonIndex = 0;
+    int mostUsedindex = 0;
 
     for(i = 0; i < numLines; i++) {
-        if(thisSet.lines[i].valid == 0) {
-            printf("returning %d\n", i);
-            return i;
+        printf("line: %d | access count: %d | most used: %d | least used: %d\n", i, thisSet.lines[i].access_counter, mostUsed, whiteCrayon);
+        if(thisSet.lines[i].access_counter > mostUsed) { 
+            mostUsedindex = i;
+            mostUsed = thisSet.lines[i].access_counter;
+        }
+        else if (thisSet.lines[i].access_counter < whiteCrayon) {
+            whiteCrayonIndex = i;
+            printf("white crayon = %d\n", i);
+            whiteCrayon = thisSet.lines[i].access_counter; 
         }
     }
-    printf("no empty sets found\n");
-    return -1;
+
+    return whiteCrayonIndex;
+}
+
+cache_info readInstruction (mem_address address, cache thisCache, cache_info params) {
+
+    int currentLine;
+    int isFull = 1; 
+
+    int numLines = params.Eval;
+    int hits = params.hits;
+    int tagSize = (64 - (params.b + params.s));
+
+    long unsigned setIndexStub = address << (tagSize);
+    long unsigned setIndex = setIndexStub >> (tagSize + params.b);
+    
+    mem_address inputTag = address >> (params.Sval + params.Bval);
+
+    cache_set tempSet = thisCache.sets[setIndex];
+
+    for(currentLine = 0; currentLine < numLines; currentLine++) {
+        set_line tempLine = tempSet.lines[currentLine];
+        if(tempLine.valid) {
+            if(tempLine.tag == inputTag) {
+                params.hits++;
+                tempLine.access_counter++;
+                thisCache.sets[setIndex].lines[currentLine] = tempLine;
+                printf("%d hits on line %d of set %d\n\n",tempLine.access_counter, currentLine, setIndex);
+            }
+        }
+        else if(!(tempLine.valid) && isFull) {
+            isFull = 0;
+        }
+    }
+    if(hits == params.hits) params.misses++;
+    else {
+        return params;
+    }
+    printf("\nmiss\n\n");
+
+    if(isFull) {
+        params.evictions++;
+        int whiteCrayon = getLeastUsed(tempSet, params);
+        thisCache.sets[setIndex].lines[whiteCrayon].valid = 1;
+        thisCache.sets[setIndex].lines[whiteCrayon].tag = inputTag;
+        thisCache.sets[setIndex].lines[whiteCrayon].access_counter = 0;
+        printf("line %d of set %d updated to %d\n", whiteCrayon, setIndex, inputTag);
+    }
+    else {
+       int open = findOpen(tempSet, params);
+       tempSet.lines[open].valid = 1;
+       tempSet.lines[open].tag = inputTag;
+       printf("line %d of set %d updated to %d\n", open, setIndex, inputTag);
+
+    }
+    return params;
 }
 
 int main(int argc, char** argv)
@@ -102,6 +184,7 @@ int main(int argc, char** argv)
         switch(opt) {
             case 's':
                 sval = optarg;
+                stats.s = atoi(sval);
                 break;
 
             case 'E':
@@ -110,6 +193,7 @@ int main(int argc, char** argv)
 
             case 'b':
                 bval = optarg;
+                stats.b = atoi(bval);
                 break;
 
             case 't':
@@ -132,24 +216,25 @@ int main(int argc, char** argv)
     stats.Bval = blockNum;
     stats.Sval = numSets;
     stats.Eval = atoi(eval);
+    stats.hits = 0;
+    stats.misses = 0;
+    stats. evictions = 0;
     simulator = buildCache(stats);
-    simulator.sets[2].lines[0].valid = 1;
-    findOpen(simulator.sets[2], stats);
-
-    printf("Sets = %d | Lines per set = %d | Block size = %d\n", stats.Sval, stats.Eval, stats.Bval);
-
-    printf("\n");
     FILE *fp = fopen(tval, "r");
+    int cmd;
+    mem_address nextAdd;
+    int size;
     char buff[255];
-    while(fgets(buff, 255, (FILE*) fp)) {
-        if(buff[0] == 'I') {
-
+    while(fscanf(fp,"%c %11x, %d", &cmd, &nextAdd, &size) == 3) {
+        if(cmd == "I") {
+            printf("Ignoring command\n\n");
         }
         else {
-            printf("%s", buff);
+            stats =    stats = readInstruction(nextAdd, simulator, stats);
         }
     }
 
+    printf("\n*****  hits: %d misses: %d evictions: %d  *****\n", stats.hits, stats.misses, stats.evictions);
     clearCache(simulator, stats);
     //printSummary(5, 6, 7);
     return 0;
